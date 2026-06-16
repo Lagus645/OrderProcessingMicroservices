@@ -1,0 +1,114 @@
+version: '3.8'
+
+services:
+  #PostgreSQL
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: microservices-postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=order_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d order_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  #Zookeeper
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: microservices-zookeeper
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_TICK_TIME=2000
+    networks:
+      - microservices-network
+
+  #Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: microservices-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_LISTENERS=INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      - KAFKA_ADVERTISED_LISTENERS=INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+    networks:
+      - microservices-network
+
+  order-service:
+    build:
+      context: .
+      dockerfile: src/OrderService/OrderService.WebApi/Dockerfile
+    container_name: order-service
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    environment:
+      - ASPNETCORE_URLS=http://+:5000
+      - ConnectionStrings__DefaultConnection=Host=postgres-db;Port=5432;Database=order_db;Username=postgres;Password=postgres
+      - Kafka__BootstrapServers=kafka:29092
+    networks:
+      - microservices-network
+
+  # Сервис оплаты
+  payment-service:
+    build:
+      context: .
+      dockerfile: src/PaymentService/PaymentService.WebApi/Dockerfile
+    container_name: payment-service
+    ports:
+      - "5100:5100"
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    environment:
+      - ASPNETCORE_URLS=http://+:5100
+      - ConnectionStrings__DefaultConnection=Host=postgres-db;Port=5432;Database=payment_db;Username=postgres;Password=postgres
+      - Kafka__BootstrapServers=kafka:29092
+    networks:
+      - microservices-network
+
+  #Сервис уведомлений
+  notification-service:
+    build:
+      context: .
+      dockerfile: src/NotificationService/NotificationService.WebApi/Dockerfile
+    container_name: notification-service
+    ports:
+      - "5200:5200"
+    depends_on:
+      - kafka
+    environment:
+      - ASPNETCORE_URLS=http://+:5200
+      - Kafka__BootstrapServers=kafka:29092
+    networks:
+      - microservices-network
+
+volumes:
+  postgres_data:
+
+networks:
+  microservices-network:
+    driver: bridge
