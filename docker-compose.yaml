@@ -50,6 +50,11 @@ services:
       - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
     networks:
       - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 29092 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   order-service:
     build:
@@ -62,7 +67,7 @@ services:
       postgres-db:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
     environment:
       - ASPNETCORE_URLS=http://+:5000
       - ConnectionStrings__DefaultConnection=Host=postgres-db;Port=5432;Database=order_db;Username=postgres;Password=postgres
@@ -82,7 +87,7 @@ services:
       postgres-db:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
     environment:
       - ASPNETCORE_URLS=http://+:5100
       - ConnectionStrings__DefaultConnection=Host=postgres-db;Port=5432;Database=payment_db;Username=postgres;Password=postgres
@@ -99,7 +104,8 @@ services:
     ports:
       - "5200:5200"
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     environment:
       - ASPNETCORE_URLS=http://+:5200
       - Kafka__BootstrapServers=kafka:29092
